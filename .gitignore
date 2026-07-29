@@ -1,0 +1,21 @@
+# Virtual environment
+bin/
+lib/
+include/
+share/
+pyvenv.cfg
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Datasets & local results
+dataset/
+results/
+
+# OS files
+.DS_Store

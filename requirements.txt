@@ -2,3 +2,4 @@ ultralytics>=8.3
 numpy>=1.26.4
 pillow>=10.4.0
 gradio>=5.0.0
+streamlit>=1.35.0

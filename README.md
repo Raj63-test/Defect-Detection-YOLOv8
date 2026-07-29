@@ -1,3 +1,15 @@
+---
+title: Defect Detection YOLOv8
+emoji: 🔍
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 5.0.0
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # 🔍 Real-Time Surface Defect Detection
 
 > A computer vision system that detects surface defects on industrial products in real time using a custom-trained YOLOv8 model. Trained on the **MVTec AD** benchmark dataset across **2 product categories** and **8 defect classes**.
