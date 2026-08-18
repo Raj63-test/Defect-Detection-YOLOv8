@@ -205,7 +205,7 @@ if input_mode == "🖼️ Image Inspection":
             st.info(f"Loaded sample image: {os.path.basename(selected_example)}")
             
         if image is not None:
-            st.image(image, caption="Original Input Image", use_column_width=True)
+            st.image(image, caption="Original Input Image", use_container_width=True)
         else:
             st.info("Please upload an image or choose a sample from the menu above.")
             
@@ -248,7 +248,7 @@ if input_mode == "🖼️ Image Inspection":
                 )
                 
             # Display annotated image
-            st.image(annotated_image, caption=f"Annotated Output ({model.task.upper()})", use_column_width=True)
+            st.image(annotated_image, caption=f"Annotated Output ({model.task.upper()})", use_container_width=True)
             
             # Display summary
             st.subheader("Inspection Summary")
