@@ -65,7 +65,8 @@ def detect_defects(
     image: Image.Image,
     conf_threshold: float = 0.25,
     iou_threshold:  float = 0.45,
-    model = None
+    model = None,
+    show_boxes: bool = True
 ) -> tuple[Image.Image, list[dict], str]:
     """
     Run YOLOv8 inference on a PIL image.
@@ -89,6 +90,7 @@ def detect_defects(
     annotated_array = results.plot(
         line_width=2,
         font_size=12,
+        boxes=show_boxes
     )
     annotated_image = Image.fromarray(annotated_array)
 
@@ -148,7 +150,8 @@ def process_video(
     output_path: str,
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
-    progress_callback = None
+    progress_callback = None,
+    show_boxes: bool = True
 ) -> dict:
     """
     Read input video, track defects frame-by-frame, save annotated output video,
@@ -203,7 +206,7 @@ def process_video(
             total_inference_time += (t_end - t_start)
 
             # Draw tracking bounding boxes/masks
-            annotated_frame = results.plot()
+            annotated_frame = results.plot(boxes=show_boxes)
             out.write(annotated_frame)
 
             # Track unique IDs

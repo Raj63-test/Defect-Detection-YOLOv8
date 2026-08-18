@@ -157,6 +157,14 @@ iou_threshold = st.sidebar.slider(
     help="Overlap threshold for Non-Maximum Suppression.",
 )
 
+# Toggle to show/hide bounding boxes (defaults to off for segment models)
+default_show_boxes = (model.task != 'segment')
+show_boxes = st.sidebar.checkbox(
+    "Show Bounding Boxes",
+    value=default_show_boxes,
+    help="Draw rectangular bounding boxes. Untick this when using segmentation models to only see masks."
+)
+
 # Input Mode Selection
 input_mode = st.radio(
     "Select Input Media Type",
@@ -221,7 +229,8 @@ if input_mode == "🖼️ Image Inspection":
                     image=image,
                     conf_threshold=conf_threshold,
                     iou_threshold=iou_threshold,
-                    model=model
+                    model=model,
+                    show_boxes=show_boxes
                 )
                 latency = (time.time() - t0) * 1000
                 
@@ -335,7 +344,8 @@ else:
                         output_path=output_video_path,
                         conf_threshold=conf_threshold,
                         iou_threshold=iou_threshold,
-                        progress_callback=update_progress
+                        progress_callback=update_progress,
+                        show_boxes=show_boxes
                     )
                 
                 status_text.success("Processing & H.264 video compression complete!")
