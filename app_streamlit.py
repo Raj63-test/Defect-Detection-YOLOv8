@@ -87,6 +87,8 @@ weights_options = {}
 # Priority defaults
 if os.path.exists("best.pt"):
     weights_options["[Detect] MVTec Defect Detection (best.pt)"] = "best.pt"
+if os.path.exists("smoke_best.pt"):
+    weights_options["[Segment] Smoke Segmentation (smoke_best.pt)"] = "smoke_best.pt"
 if os.path.exists("../defect_segmentation_yolov8/best.pt"):
     weights_options["[Segment] Fire & Smoke Segmentation (defect_segmentation_yolov8/best.pt)"] = "../defect_segmentation_yolov8/best.pt"
 
