@@ -1,143 +1,139 @@
 """
 detector.py
 -----------
-Loads the trained YOLOv8 model (best.pt) and runs inference on images.
-This file is imported by app.py — it never trains, only predicts.
-
-Usage (from app.py):
-    from detector import detect_defects
-    result_image, detections = detect_defects(pil_image)
+Loads the trained YOLOv8 model and runs inference/tracking on images and videos.
+Designed for both Streamlit and standalone usage.
 """
 
 from ultralytics import YOLO
 from PIL import Image
 import numpy as np
+import os
+import time
+import subprocess
+
+# Cache for loaded models to avoid reloading weights repeatedly
+_loaded_models = {}
+
+def load_model(weights_path: str) -> YOLO:
+    """Load a YOLOv8 model from the given path (uses caching)."""
+    # Resolve relative paths relative to this script directory if not found in CWD
+    if not os.path.isabs(weights_path) and not os.path.exists(weights_path):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        resolved_path = os.path.join(script_dir, weights_path)
+        if os.path.exists(resolved_path):
+            weights_path = resolved_path
+
+    if weights_path not in _loaded_models:
+        print(f"Loading YOLO model from {weights_path}...")
+        # Check if file exists; if not, fall back to downloading standard model if it's a model name
+        if not os.path.exists(weights_path) and not weights_path.endswith('.pt'):
+            # E.g. yolov8n.pt or yolov8n-seg.pt
+            _loaded_models[weights_path] = YOLO(weights_path)
+        else:
+            _loaded_models[weights_path] = YOLO(weights_path)
+    return _loaded_models[weights_path]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MODEL LOADING
-#
-# YOLO("best.pt") loads once when the module is imported.
-# This means the model is loaded into memory ONCE when app.py starts,
-# not on every single request — which is important for performance.
-#
-# If best.pt is in the same folder as detector.py, just "best.pt" works.
-# If it's somewhere else, use the full path: YOLO("/path/to/best.pt")
-# ─────────────────────────────────────────────────────────────────────────────
-print("Loading YOLOv8 model...")
-model = YOLO("best.pt")
-print(f"Model loaded. Classes: {list(model.names.values())}")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLASS LABELS AND COLOURS
-#
-# These map each class_id to a human-readable label and a display colour.
-# Colours are used by results.plot() to draw boxes — one colour per class
-# makes it easy to tell defect types apart visually.
-# ─────────────────────────────────────────────────────────────────────────────
-CLASS_INFO = {
-    # Bottle defects
-    0: {"label": "broken_large",  "color": (220, 50,  50)},   # red
-    1: {"label": "broken_small",  "color": (255, 140,  0)},   # orange
-    2: {"label": "contamination", "color": (255, 215,  0)},   # yellow
-
-    # Metal nut defects
-    3: {"label": "bent",          "color": (50,  205, 50)},   # green
-    4: {"label": "color",         "color": (0,   191, 255)},  # sky blue
-    5: {"label": "flip",          "color": (138,  43, 226)},  # purple
-    6: {"label": "scratch",       "color": (255,  20, 147)},  # pink
-    7: {"label": "thread",        "color": (0,   255, 127)},  # spring green
-}
+def get_class_info(model: YOLO) -> dict:
+    """Generate display labels and colors dynamically based on the model classes."""
+    import random
+    presets = {
+        "broken_large": (220, 50, 50),
+        "broken_small": (255, 140, 0),
+        "contamination": (255, 215, 0),
+        "bent": (50, 205, 50),
+        "color": (0, 191, 255),
+        "flip": (138, 43, 226),
+        "scratch": (255, 20, 147),
+        "thread": (0, 255, 127),
+        "fire": (255, 69, 0),
+        "smoke": (128, 128, 128)
+    }
+    class_info = {}
+    for cid, name in model.names.items():
+        color = presets.get(name)
+        if not color:
+            random.seed(cid)
+            color = (random.randint(50, 220), random.randint(50, 220), random.randint(50, 220))
+        class_info[cid] = {"label": name, "color": color}
+    return class_info
 
 
 def detect_defects(
     image: Image.Image,
     conf_threshold: float = 0.25,
     iou_threshold:  float = 0.45,
+    model = None
 ) -> tuple[Image.Image, list[dict], str]:
     """
     Run YOLOv8 inference on a PIL image.
-
-    Args:
-        image          : PIL Image (RGB) — the product photo to inspect
-        conf_threshold : minimum confidence to show a detection (0.0–1.0)
-                         0.25 = show detections the model is 25%+ confident about
-                         increase to 0.5 if you're getting too many false positives
-        iou_threshold  : overlap threshold for NMS (Non-Maximum Suppression)
-                         0.45 is the YOLOv8 default — usually fine to leave as is
-
-    Returns:
-        annotated_image : PIL Image with bounding boxes drawn on it
-        detections      : list of dicts, one per detected defect
-        summary_text    : plain text summary for display in the Gradio UI
+    Supports both detection and segmentation models.
     """
+    # Fallback to local default model if not provided
+    if model is None:
+        model = load_model("best.pt")
 
-    # ── Convert PIL → numpy array ─────────────────────────────────────────────
-    # YOLOv8 accepts numpy arrays (H, W, 3) in RGB format.
-    # PIL images are already RGB so no channel conversion needed.
     img_array = np.array(image)
 
-    # ── Run inference ─────────────────────────────────────────────────────────
-    # model() returns a list of Results objects — one per image.
-    # Since we pass a single image, we take index [0].
+    # Run inference
     results = model(
         img_array,
         conf=conf_threshold,
         iou=iou_threshold,
-        verbose=False,          # suppress per-inference console output
+        verbose=False,
     )[0]
 
-    # ── Draw bounding boxes ───────────────────────────────────────────────────
-    # results.plot() returns a numpy array with boxes, labels, and
-    # confidence scores drawn directly onto the image.
-    # We convert it back to PIL for Gradio to display.
+    # Draw annotations (boxes/masks)
     annotated_array = results.plot(
-        line_width=2,           # box border thickness in pixels
-        font_size=12,           # label font size
+        line_width=2,
+        font_size=12,
     )
     annotated_image = Image.fromarray(annotated_array)
 
-    # ── Parse detections into structured dicts ────────────────────────────────
-    # results.boxes contains all detected bounding boxes.
-    # Each box has: cls (class id), conf (confidence), xyxy (pixel coords)
+    # Parse detections into structured dictionary
     detections = []
+    class_info = get_class_info(model)
 
-    for box in results.boxes:
-        class_id   = int(box.cls.item())
-        confidence = round(float(box.conf.item()), 3)
+    if results.boxes is not None:
+        for box in results.boxes:
+            class_id = int(box.cls.item())
+            confidence = round(float(box.conf.item()), 3)
 
-        # Pixel coordinates of the bounding box
-        x1, y1, x2, y2 = [round(v) for v in box.xyxy[0].tolist()]
+            # Bounding box coordinates
+            x1, y1, x2, y2 = [round(v) for v in box.xyxy[0].tolist()]
+            box_w = x2 - x1
+            box_h = y2 - y1
 
-        # Box dimensions in pixels
-        box_w = x2 - x1
-        box_h = y2 - y1
+            label = class_info.get(class_id, {}).get("label") or model.names.get(class_id, f"class_{class_id}")
 
-        # Get label from our CLASS_INFO dict
-        # Fall back to model.names if class_id not in CLASS_INFO (safety net)
-        label = CLASS_INFO.get(class_id, {}).get("label") or model.names.get(class_id, f"class_{class_id}")
+            detection_entry = {
+                "class_id"  : class_id,
+                "label"     : label,
+                "confidence": confidence,
+                "bbox_pixels": [x1, y1, x2, y2],
+                "bbox_size" : f"{box_w}×{box_h}px",
+            }
 
-        detections.append({
-            "class_id"  : class_id,
-            "label"     : label,
-            "confidence": confidence,
-            "bbox_pixels": [x1, y1, x2, y2],   # top-left, bottom-right
-            "bbox_size" : f"{box_w}×{box_h}px",
-        })
+            # If segmentation masks are available, extract mask area or statistics if needed
+            if hasattr(results, 'masks') and results.masks is not None:
+                detection_entry["has_mask"] = True
 
-    # Sort by confidence descending — highest confidence defect first
+            detections.append(detection_entry)
+
+    # Sort by confidence descending
     detections.sort(key=lambda d: d["confidence"], reverse=True)
 
-    # ── Build summary text ────────────────────────────────────────────────────
-    # This string is shown in the Gradio textbox next to the annotated image.
+    # Build summary text
     if not detections:
-        summary_text = "✅ No defects detected — product appears normal."
+        summary_text = "✅ No anomalies/defects detected."
     else:
-        lines = [f"⚠️  {len(detections)} defect(s) detected:\n"]
+        lines = [f"⚠️  {len(detections)} detection(s) found:\n"]
         for i, d in enumerate(detections, 1):
+            mask_tag = " [with Mask]" if d.get("has_mask") else ""
             lines.append(
-                f"  {i}. {d['label']}"
+                f"  {i}. {d['label']}{mask_tag}"
                 f"  —  confidence: {d['confidence']:.1%}"
                 f"  —  size: {d['bbox_size']}"
             )
@@ -146,47 +142,149 @@ def detect_defects(
     return annotated_image, detections, summary_text
 
 
-def get_model_info() -> dict:
+def process_video(
+    model: YOLO,
+    input_path: str,
+    output_path: str,
+    conf_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    progress_callback = None
+) -> dict:
     """
-    Return basic info about the loaded model.
-    Used by app.py to display model details in the Gradio UI.
+    Read input video, track defects frame-by-frame, save annotated output video,
+    and convert to web-playable H.264 format using ffmpeg.
     """
+    cap = cv2_cap = cv2 = None
+    try:
+        import cv2
+    except ImportError:
+        raise ImportError("OpenCV (cv2) is not installed in the current environment.")
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise IOError(f"Could not open input video file: {input_path}")
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0 or np.isnan(fps):
+        fps = 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    temp_output_path = output_path + ".temp.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+
+    frame_idx = 0
+    start_time = time.time()
+    total_inference_time = 0.0
+    total_objects_tracked = 0
+    unique_ids = set()
+
+    # Track frame times to compute exact FPS metrics
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_idx += 1
+
+            t_start = time.time()
+            # Perform ByteTrack tracking
+            results = model.track(
+                frame,
+                persist=True,
+                conf=conf_threshold,
+                iou=iou_threshold,
+                verbose=False
+            )[0]
+            t_end = time.time()
+            total_inference_time += (t_end - t_start)
+
+            # Draw tracking bounding boxes/masks
+            annotated_frame = results.plot()
+            out.write(annotated_frame)
+
+            # Track unique IDs
+            if results.boxes is not None and results.boxes.id is not None:
+                ids = results.boxes.id.int().tolist()
+                unique_ids.update(ids)
+                total_objects_tracked = max(total_objects_tracked, len(unique_ids))
+
+            if progress_callback:
+                progress_callback(frame_idx, total_frames)
+    finally:
+        cap.release()
+        out.release()
+
+    total_time = time.time() - start_time
+    avg_fps = frame_idx / total_time if total_time > 0 else 0.0
+    avg_inference_latency = (total_inference_time / frame_idx * 1000) if frame_idx > 0 else 0.0
+
+    # Convert the temp output video to web-playable H.264 using FFmpeg
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+
+    try:
+        cmd = [
+            'ffmpeg', '-y', '-i', temp_output_path,
+            '-vcodec', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            output_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        if os.path.exists(temp_output_path):
+            os.remove(temp_output_path)
+    except Exception as e:
+        print(f"FFmpeg H.264 re-encoding failed: {e}")
+        # Fallback to the temp output file as the final output
+        if os.path.exists(temp_output_path):
+            os.rename(temp_output_path, output_path)
+
     return {
-        "model_file"  : "best.pt",
+        "total_frames": frame_idx,
+        "avg_fps": round(avg_fps, 2),
+        "avg_inference_latency_ms": round(avg_inference_latency, 2),
+        "total_time_sec": round(total_time, 2),
+        "unique_objects_tracked": total_objects_tracked,
+        "task": model.task
+    }
+
+
+def get_model_info(model = None) -> dict:
+    """Return basic info about the loaded model."""
+    if model is None:
+        model = load_model("best.pt")
+    return {
         "num_classes" : len(model.names),
         "class_names" : list(model.names.values()),
         "task"        : model.task,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# QUICK TEST
-# Run this file directly to verify the model loads and inference works:
-#   python detector.py
-# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import os
-
     print("\n── Model info ──────────────────────────────")
-    info = get_model_info()
+    model = load_model("best.pt")
+    info = get_model_info(model)
     for k, v in info.items():
         print(f"  {k}: {v}")
 
-    # Try inference on a test image if one exists
     test_dir = "test_images"
     if os.path.exists(test_dir):
-        test_files = [f for f in os.listdir(test_dir) if f.endswith((".png", ".jpg"))]
+        test_files = [f for f in os.listdir(test_dir) if f.endswith((".png", ".jpg", ".jpeg"))]
         if test_files:
             test_path = os.path.join(test_dir, test_files[0])
             print(f"\n── Running test inference on: {test_path}")
             img = Image.open(test_path).convert("RGB")
-            annotated, detections, summary = detect_defects(img)
+            annotated, detections, summary = detect_defects(img, model=model)
             print(summary)
             print(f"\nAnnotated image size: {annotated.size}")
             print("detector.py is working correctly ✓")
         else:
             print("\nNo test images found in test_images/ — skipping inference test.")
-            print("Add a .png or .jpg file to test_images/ and run again.")
     else:
-        print("\ntest_images/ folder not found — skipping inference test.")
         print("Model loaded successfully ✓")
