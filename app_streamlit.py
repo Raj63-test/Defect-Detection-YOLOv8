@@ -105,10 +105,9 @@ for p in glob.glob("*.pt") + glob.glob("../*/*.pt") + glob.glob("../Smart-Monito
     if label not in weights_options and p not in weights_options.values():
         weights_options[label] = p
 
-# Standard model fallbacks if nothing is found
-if not weights_options:
-    weights_options["[DETECT] YOLOv8n Pretrained"] = "yolov8n.pt"
-    weights_options["[SEGMENT] YOLOv8n-Seg Pretrained"] = "yolov8n-seg.pt"
+# Standard model options to always allow quick testing
+weights_options["[DETECT] YOLOv8n Pretrained (COCO)"] = "yolov8n.pt"
+weights_options["[SEGMENT] YOLOv8n-Seg Pretrained (COCO)"] = "yolov8n-seg.pt"
 
 # Sidebar Configuration
 st.sidebar.title("🛠️ Configuration")
